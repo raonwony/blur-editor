@@ -1,10 +1,37 @@
-import type { PhotoProject } from '../types'
+import type { PhotoProject, TextLayer } from '../types'
 import { applyStrokeBlurs } from './canvasBlur'
 
 interface RenderOptions {
   maxDim?: number
   includeText?: boolean
   includeCrop?: boolean
+}
+
+// Draws text layers onto a canvas already sized to (width x height) of the rotated media —
+// shared by the photo renderer, the video frame baker, and the video live preview.
+export function drawTextLayers(ctx: CanvasRenderingContext2D, textLayers: TextLayer[], width: number, height: number) {
+  for (const t of textLayers) {
+    if (!t.text.trim()) continue
+    ctx.save()
+    ctx.translate(t.x * width, t.y * height)
+    ctx.rotate((t.rotation * Math.PI) / 180)
+    const fontPx = Math.max(8, t.size * height)
+    ctx.font = `${fontPx}px ${t.font}`
+    ctx.fillStyle = t.color
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.lineJoin = 'round'
+    ctx.strokeStyle = t.strokeColor ?? 'transparent'
+    ctx.lineWidth = Math.max(1, fontPx * 0.12)
+    const lines = t.text.split('\n')
+    const lineHeight = fontPx * 1.25
+    lines.forEach((line, i) => {
+      const y = (i - (lines.length - 1) / 2) * lineHeight
+      if (t.strokeColor) ctx.strokeText(line, 0, y)
+      ctx.fillText(line, 0, y)
+    })
+    ctx.restore()
+  }
 }
 
 // Renders a photo project (rotation -> blur -> text -> crop) into a canvas.
@@ -37,28 +64,7 @@ export function renderPhoto(image: HTMLImageElement, project: PhotoProject, opts
   }
 
   if (includeText) {
-    for (const t of project.textLayers) {
-      if (!t.text.trim()) continue
-      fctx.save()
-      fctx.translate(t.x * iw, t.y * ih)
-      fctx.rotate((t.rotation * Math.PI) / 180)
-      const fontPx = Math.max(8, t.size * ih)
-      fctx.font = `${fontPx}px ${t.font}`
-      fctx.fillStyle = t.color
-      fctx.textAlign = 'center'
-      fctx.textBaseline = 'middle'
-      fctx.lineJoin = 'round'
-      fctx.strokeStyle = t.strokeColor ?? 'transparent'
-      fctx.lineWidth = Math.max(1, fontPx * 0.12)
-      const lines = t.text.split('\n')
-      const lineHeight = fontPx * 1.25
-      lines.forEach((line, i) => {
-        const y = (i - (lines.length - 1) / 2) * lineHeight
-        if (t.strokeColor) fctx.strokeText(line, 0, y)
-        fctx.fillText(line, 0, y)
-      })
-      fctx.restore()
-    }
+    drawTextLayers(fctx, project.textLayers, iw, ih)
   }
 
   if (!includeCrop || !project.crop) return full

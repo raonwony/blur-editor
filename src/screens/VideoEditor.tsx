@@ -1,16 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Rotation, VideoBlurRegion, VideoProject } from '../types'
+import type { Rotation, TextLayer, VideoBlurRegion, VideoProject } from '../types'
 import { applyRegionBlurs, DEFAULT_BLUR_STRENGTH } from '../utils/canvasBlur'
-import { clamp01, rotateCropRect90, rotatePoint90 } from '../utils/geometry'
-import { rotatedSize } from '../utils/renderPhoto'
+import { clamp01, normalizeAngle, rotateCropRect90, rotatePoint90 } from '../utils/geometry'
+import { drawTextLayers, rotatedSize } from '../utils/renderPhoto'
 import { useElementSize } from '../hooks/useElementSize'
 import { useOverlayRect } from '../hooks/useOverlayRect'
 import { useCropTool } from '../hooks/useCropTool'
 import CropOverlay from '../components/CropOverlay'
 import CropControls from '../components/CropControls'
+import { createTextLayer, TextOverlayItem, TextToolPanel } from '../components/TextLayerTools'
 import './VideoEditor.css'
 
-type Tool = 'blur' | 'crop' | null
+type Tool = 'blur' | 'text' | 'crop' | null
 
 interface VideoEditorProps {
   project: VideoProject
@@ -27,6 +28,7 @@ function formatTime(t: number) {
 export default function VideoEditor({ project, onChange }: VideoEditorProps) {
   const [tool, setTool] = useState<Tool>(null)
   const [selectedRegionId, setSelectedRegionId] = useState<string | null>(null)
+  const [selectedTextId, setSelectedTextId] = useState<string | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(project.duration || 0)
   const [isPlaying, setIsPlaying] = useState(false)
@@ -76,6 +78,10 @@ export default function VideoEditor({ project, onChange }: VideoEditorProps) {
           if (active.length) {
             applyRegionBlurs(canvas, active)
           }
+
+          if (tool !== 'text' && project.textLayers.length) {
+            drawTextLayers(ctx, project.textLayers, rw, rh)
+          }
         }
         setCurrentTime(video.currentTime)
       }
@@ -83,7 +89,7 @@ export default function VideoEditor({ project, onChange }: VideoEditorProps) {
     }
     raf = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(raf)
-  }, [project.rotation, project.blurRegions])
+  }, [project.rotation, project.blurRegions, project.textLayers, tool])
 
   function onLoadedMetadata() {
     const video = videoRef.current
@@ -163,21 +169,40 @@ export default function VideoEditor({ project, onChange }: VideoEditorProps) {
     window.addEventListener('pointerup', up)
   }
 
+  function addTextLayer() {
+    const layer = createTextLayer()
+    onChange({ textLayers: [...project.textLayers, layer] })
+    setSelectedTextId(layer.id)
+  }
+  function updateTextLayer(id: string, patch: Partial<TextLayer>) {
+    onChange({ textLayers: project.textLayers.map((t) => (t.id === id ? { ...t, ...patch } : t)) })
+  }
+  function deleteTextLayer(id: string) {
+    onChange({ textLayers: project.textLayers.filter((t) => t.id !== id) })
+    if (selectedTextId === id) setSelectedTextId(null)
+  }
+
   function rotate90() {
     const next = ((project.rotation + 90) % 360) as Rotation
     const blurRegions = project.blurRegions.map((r) => {
       const center = rotatePoint90({ x: r.x, y: r.y })
       return { ...r, x: center.x, y: center.y }
     })
+    const textLayers = project.textLayers.map((t) => {
+      const pos = rotatePoint90({ x: t.x, y: t.y })
+      return { ...t, x: pos.x, y: pos.y, rotation: normalizeAngle(t.rotation + 90) }
+    })
     onChange({
       rotation: next,
       blurRegions,
+      textLayers,
       crop: project.crop ? rotateCropRect90(project.crop) : null,
     })
     cropTool.resetForRotate()
   }
 
   const selectedRegion = project.blurRegions.find((r) => r.id === selectedRegionId) ?? null
+  const selectedText = project.textLayers.find((t) => t.id === selectedTextId) ?? null
 
   return (
     <div className="video-editor">
@@ -210,6 +235,19 @@ export default function VideoEditor({ project, onChange }: VideoEditorProps) {
                   height: `${region.h * 100}%`,
                 }}
                 onPointerDown={(e) => onRegionPointerDown(e, region)}
+              />
+            ))}
+
+          {tool === 'text' &&
+            project.textLayers.map((layer) => (
+              <TextOverlayItem
+                key={layer.id}
+                layer={layer}
+                stageHeight={overlayRect.height}
+                selected={selectedTextId === layer.id}
+                onSelect={() => setSelectedTextId(layer.id)}
+                onUpdate={(patch) => updateTextLayer(layer.id, patch)}
+                onDelete={() => deleteTextLayer(layer.id)}
               />
             ))}
 
@@ -305,6 +343,15 @@ export default function VideoEditor({ project, onChange }: VideoEditorProps) {
         </div>
       )}
 
+      {tool === 'text' && (
+        <TextToolPanel
+          selectedText={selectedText}
+          onAdd={addTextLayer}
+          onUpdate={(patch) => selectedText && updateTextLayer(selectedText.id, patch)}
+          onDelete={() => selectedText && deleteTextLayer(selectedText.id)}
+        />
+      )}
+
       {tool === 'crop' && (
         <CropControls
           activePreset={cropTool.activePreset}
@@ -319,6 +366,9 @@ export default function VideoEditor({ project, onChange }: VideoEditorProps) {
       <nav className="tool-tabs">
         <button className={`tool-tab ${tool === 'blur' ? 'active' : ''}`} onClick={() => setTool(tool === 'blur' ? null : 'blur')}>
           <span className="tool-icon">◍</span>블러
+        </button>
+        <button className={`tool-tab ${tool === 'text' ? 'active' : ''}`} onClick={() => setTool(tool === 'text' ? null : 'text')}>
+          <span className="tool-icon">✎</span>손글씨
         </button>
         <button className={`tool-tab ${tool === 'crop' ? 'active' : ''}`} onClick={() => setTool(tool === 'crop' ? null : 'crop')}>
           <span className="tool-icon">⛶</span>크롭

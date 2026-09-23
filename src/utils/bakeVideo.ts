@@ -1,5 +1,6 @@
 import type { VideoProject } from '../types'
 import { applyRegionBlurs } from './canvasBlur'
+import { drawTextLayers } from './renderPhoto'
 
 type CaptureCanvas = HTMLCanvasElement & { captureStream?: (fps?: number) => MediaStream }
 type CaptureVideo = HTMLVideoElement & { captureStream?: () => MediaStream; mozCaptureStream?: () => MediaStream }
@@ -68,6 +69,10 @@ export async function bakeVideo(project: VideoProject, onProgress?: (fraction: n
     const active = project.blurRegions.filter((r) => t >= r.start && t <= r.end)
     if (active.length) {
       applyRegionBlurs(fullCanvas, active)
+    }
+
+    if (project.textLayers.length) {
+      drawTextLayers(fctx, project.textLayers, rw, rh)
     }
 
     if (crop) {
