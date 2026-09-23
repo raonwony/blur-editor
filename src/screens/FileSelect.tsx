@@ -10,7 +10,8 @@ interface FileSelectProps {
 }
 
 export default function FileSelect({ onCreated, onCancel }: FileSelectProps) {
-  const cameraInput = useRef<HTMLInputElement>(null)
+  const cameraPhotoInput = useRef<HTMLInputElement>(null)
+  const cameraVideoInput = useRef<HTMLInputElement>(null)
   const galleryInput = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -89,9 +90,13 @@ export default function FileSelect({ onCreated, onCancel }: FileSelectProps) {
         <h1>사진 또는 동영상 선택</h1>
         <p className="select-sub">블러 처리하고 꾸민 뒤 바로 내보낼 수 있어요.</p>
 
-        <button className="pick-btn" disabled={busy} onClick={() => cameraInput.current?.click()}>
+        <button className="pick-btn" disabled={busy} onClick={() => cameraPhotoInput.current?.click()}>
           <span className="pick-icon">📷</span>
-          <span>촬영하기</span>
+          <span>사진 촬영</span>
+        </button>
+        <button className="pick-btn" disabled={busy} onClick={() => cameraVideoInput.current?.click()}>
+          <span className="pick-icon">🎥</span>
+          <span>동영상 촬영</span>
         </button>
         <button className="pick-btn" disabled={busy} onClick={() => galleryInput.current?.click()}>
           <span className="pick-icon">🖼️</span>
@@ -103,9 +108,21 @@ export default function FileSelect({ onCreated, onCancel }: FileSelectProps) {
         {error && <p className="select-error">{error}</p>}
 
         <input
-          ref={cameraInput}
+          ref={cameraPhotoInput}
           type="file"
-          accept="image/*,video/*"
+          accept="image/*"
+          capture="environment"
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            e.target.value = ''
+            if (f) handleFile(f)
+          }}
+        />
+        <input
+          ref={cameraVideoInput}
+          type="file"
+          accept="video/*"
           capture="environment"
           hidden
           onChange={(e) => {
