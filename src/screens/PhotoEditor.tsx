@@ -27,6 +27,16 @@ function computeShapeBounds(start: Point, current: Point, defaultSize: number) {
   return { x: start.x, y: start.y, w: defaultSize, h: defaultSize }
 }
 
+// Resizing a hand-drawn rect/circle should keep the dragged aspect ratio instead of snapping to a square.
+function scaleShape(shape: BlurStroke, newMaxSide: number): { w: number; h: number } {
+  const currentMax = Math.max(shape.w, shape.h) || newMaxSide
+  const scale = newMaxSide / currentMax
+  return {
+    w: Math.max(SHAPE_MIN_SIZE, Math.min(1, shape.w * scale)),
+    h: Math.max(SHAPE_MIN_SIZE, Math.min(1, shape.h * scale)),
+  }
+}
+
 const FREEFORM_HIT_PADDING = 0.03
 
 function strokeBounds(stroke: BlurStroke) {
@@ -303,6 +313,7 @@ export default function PhotoEditor({ project, onChange }: PhotoEditorProps) {
       fontLabel: font.id,
       size: 0.07,
       color: '#ffffff',
+      strokeColor: null,
       x: 0.5,
       y: 0.5,
       rotation: 0,
@@ -463,11 +474,11 @@ export default function PhotoEditor({ project, onChange }: PhotoEditorProps) {
                   min={0.05}
                   max={0.8}
                   step={0.01}
-                  value={selectedRectOrCircle ? selectedRectOrCircle.w : shapeSize}
+                  value={selectedRectOrCircle ? Math.max(selectedRectOrCircle.w, selectedRectOrCircle.h) : shapeSize}
                   onChange={(e) => {
                     const v = Number(e.target.value)
                     setShapeSize(v)
-                    if (selectedRectOrCircle) updateBlurShape(selectedRectOrCircle.id, { w: v, h: v })
+                    if (selectedRectOrCircle) updateBlurShape(selectedRectOrCircle.id, scaleShape(selectedRectOrCircle, v))
                   }}
                 />
               </label>
@@ -534,8 +545,8 @@ export default function PhotoEditor({ project, onChange }: PhotoEditorProps) {
                       min={0.05}
                       max={0.8}
                       step={0.01}
-                      value={selectedRectOrCircle.w}
-                      onChange={(e) => updateBlurShape(selectedRectOrCircle.id, { w: Number(e.target.value), h: Number(e.target.value) })}
+                      value={Math.max(selectedRectOrCircle.w, selectedRectOrCircle.h)}
+                      onChange={(e) => updateBlurShape(selectedRectOrCircle.id, scaleShape(selectedRectOrCircle, Number(e.target.value)))}
                     />
                   </label>
                   <label className="slider-row">
@@ -598,6 +609,29 @@ export default function PhotoEditor({ project, onChange }: PhotoEditorProps) {
                   />
                 ))}
                 <input type="color" className="color-custom" value={selectedText.color} onChange={(e) => updateTextLayer(selectedText.id, { color: e.target.value })} />
+              </div>
+              <p className="panel-subheading">테두리</p>
+              <div className="color-row">
+                <button
+                  className={`ghost-btn ${!selectedText.strokeColor ? 'active' : ''}`}
+                  onClick={() => updateTextLayer(selectedText.id, { strokeColor: null })}
+                >
+                  없음
+                </button>
+                {['#000000', '#ffffff'].map((c) => (
+                  <button
+                    key={c}
+                    className={`color-swatch ${selectedText.strokeColor === c ? 'active' : ''}`}
+                    style={{ background: c }}
+                    onClick={() => updateTextLayer(selectedText.id, { strokeColor: c })}
+                  />
+                ))}
+                <input
+                  type="color"
+                  className="color-custom"
+                  value={selectedText.strokeColor ?? '#000000'}
+                  onChange={(e) => updateTextLayer(selectedText.id, { strokeColor: e.target.value })}
+                />
                 <button className="ghost-btn delete-text-btn" onClick={() => deleteTextLayer(selectedText.id)}>삭제</button>
               </div>
             </div>
@@ -669,6 +703,7 @@ function TextOverlayItem({
     window.addEventListener('pointerup', up)
   }
 
+  const fontSize = Math.max(10, layer.size * stageHeight)
   return (
     <div
       className={`text-overlay ${selected ? 'selected' : ''}`}
@@ -678,7 +713,9 @@ function TextOverlayItem({
         transform: `translate(-50%, -50%) rotate(${layer.rotation}deg)`,
         fontFamily: layer.font,
         color: layer.color,
-        fontSize: `${Math.max(10, layer.size * stageHeight)}px`,
+        fontSize: `${fontSize}px`,
+        WebkitTextStroke: layer.strokeColor ? `${Math.max(1, fontSize * 0.06)}px ${layer.strokeColor}` : undefined,
+        paintOrder: 'stroke fill',
       }}
       onPointerDown={onPointerDown}
     >

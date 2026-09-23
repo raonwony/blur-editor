@@ -40,6 +40,7 @@ export interface TextLayer {
   fontLabel: string
   size: number // 0..1, normalized to media height
   color: string
+  strokeColor: string | null // null = no outline
   x: number // normalized center x
   y: number // normalized center y
   rotation: number // degrees

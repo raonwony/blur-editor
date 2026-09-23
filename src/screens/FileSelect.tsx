@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { saveProject } from '../db'
 import type { PhotoProject, VideoProject } from '../types'
-import { makeThumbnail, probeMedia } from '../utils/media'
+import { makeThumbnail, normalizeImageFile, probeMedia } from '../utils/media'
 import './FileSelect.css'
 
 interface FileSelectProps {
@@ -16,19 +16,20 @@ export default function FileSelect({ onCreated, onCancel }: FileSelectProps) {
   const [error, setError] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
 
-  async function handleFile(file: File) {
+  async function handleFile(rawFile: File) {
     if (busy) return
     setError(null)
     setBusy(true)
     try {
-      const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
+      const ext = rawFile.name.split('.').pop()?.toLowerCase() ?? ''
       const videoExts = ['mp4', 'mov', 'm4v', 'webm', 'avi', 'mkv', '3gp']
       const imageExts = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'heic', 'heif', 'avif', 'tiff', 'tif']
-      const isVideo = file.type.startsWith('video') || (!file.type && videoExts.includes(ext))
-      const isImage = file.type.startsWith('image') || (!file.type && imageExts.includes(ext))
+      const isVideo = rawFile.type.startsWith('video') || (!rawFile.type && videoExts.includes(ext))
+      const isImage = rawFile.type.startsWith('image') || (!rawFile.type && imageExts.includes(ext)) || ext === 'heic' || ext === 'heif'
       if (!isVideo && !isImage) {
         throw new Error('사진 또는 동영상 파일만 사용할 수 있어요.')
       }
+      const file = isImage ? await normalizeImageFile(rawFile) : rawFile
       const info = await probeMedia(file, isVideo)
       const thumbnail = await makeThumbnail(file, isVideo).catch(() => null)
       const id = crypto.randomUUID()
@@ -104,7 +105,7 @@ export default function FileSelect({ onCreated, onCancel }: FileSelectProps) {
         <input
           ref={cameraInput}
           type="file"
-          accept="image/*"
+          accept="image/*,video/*"
           capture="environment"
           hidden
           onChange={(e) => {

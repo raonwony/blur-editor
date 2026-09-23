@@ -47,10 +47,15 @@ export function renderPhoto(image: HTMLImageElement, project: PhotoProject, opts
       fctx.fillStyle = t.color
       fctx.textAlign = 'center'
       fctx.textBaseline = 'middle'
+      fctx.lineJoin = 'round'
+      fctx.strokeStyle = t.strokeColor ?? 'transparent'
+      fctx.lineWidth = Math.max(1, fontPx * 0.12)
       const lines = t.text.split('\n')
       const lineHeight = fontPx * 1.25
       lines.forEach((line, i) => {
-        fctx.fillText(line, 0, (i - (lines.length - 1) / 2) * lineHeight)
+        const y = (i - (lines.length - 1) / 2) * lineHeight
+        if (t.strokeColor) fctx.strokeText(line, 0, y)
+        fctx.fillText(line, 0, y)
       })
       fctx.restore()
     }

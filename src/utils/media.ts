@@ -4,6 +4,19 @@ export interface MediaInfo {
   duration: number
 }
 
+// iPhone photos are often HEIC/HEIF, which Chrome/Android can't decode natively.
+// Convert to JPEG up front so every downstream step (thumbnail, canvas edit, export) just sees a normal image.
+export async function normalizeImageFile(file: File): Promise<File> {
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
+  const isHeic = file.type === 'image/heic' || file.type === 'image/heif' || ext === 'heic' || ext === 'heif'
+  if (!isHeic) return file
+  const { default: heic2any } = await import('heic2any')
+  const converted = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 })
+  const blob = Array.isArray(converted) ? converted[0] : converted
+  const name = file.name.replace(/\.(heic|heif)$/i, '.jpg') || 'photo.jpg'
+  return new File([blob], name, { type: 'image/jpeg' })
+}
+
 export function probeMedia(file: Blob, isVideo: boolean): Promise<MediaInfo> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file)
