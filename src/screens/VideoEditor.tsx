@@ -285,36 +285,20 @@ export default function VideoEditor({ project, onChange }: VideoEditorProps) {
                   onChange={(e) => updateRegion(selectedRegion.id, { strength: Number(e.target.value) })}
                 />
               </label>
-              <label className="slider-row">
-                <span>시작</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={duration || 0}
-                  step={0.05}
-                  value={selectedRegion.start}
-                  onChange={(e) => {
-                    const start = Math.min(Number(e.target.value), selectedRegion.end - 0.1)
-                    updateRegion(selectedRegion.id, { start })
-                    seek(start)
-                  }}
+              <div className="trim-row">
+                <div className="trim-labels">
+                  <span>{formatTime(selectedRegion.start)}</span>
+                  <span>구간</span>
+                  <span>{formatTime(selectedRegion.end)}</span>
+                </div>
+                <TrimRange
+                  duration={duration || 0}
+                  start={selectedRegion.start}
+                  end={selectedRegion.end}
+                  onChange={(start, end) => updateRegion(selectedRegion.id, { start, end })}
+                  onScrub={seek}
                 />
-              </label>
-              <label className="slider-row">
-                <span>종료</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={duration || 0}
-                  step={0.05}
-                  value={selectedRegion.end}
-                  onChange={(e) => {
-                    const end = Math.max(Number(e.target.value), selectedRegion.start + 0.1)
-                    updateRegion(selectedRegion.id, { end })
-                    seek(end)
-                  }}
-                />
-              </label>
+              </div>
               <button className="ghost-btn delete-text-btn" onClick={() => deleteRegion(selectedRegion.id)}>이 블러 삭제</button>
             </div>
           )}
@@ -340,6 +324,65 @@ export default function VideoEditor({ project, onChange }: VideoEditorProps) {
           <span className="tool-icon">⛶</span>크롭
         </button>
       </nav>
+    </div>
+  )
+}
+
+const TRIM_MIN_GAP = 0.1
+
+function TrimRange({
+  duration,
+  start,
+  end,
+  onChange,
+  onScrub,
+}: {
+  duration: number
+  start: number
+  end: number
+  onChange: (start: number, end: number) => void
+  onScrub: (t: number) => void
+}) {
+  const trackRef = useRef<HTMLDivElement>(null)
+
+  function posToTime(clientX: number) {
+    const track = trackRef.current
+    if (!track || !duration) return 0
+    const rect = track.getBoundingClientRect()
+    return clamp01((clientX - rect.left) / rect.width) * duration
+  }
+
+  function onHandlePointerDown(which: 'start' | 'end', e: React.PointerEvent) {
+    e.stopPropagation()
+    e.preventDefault()
+    function move(ev: PointerEvent) {
+      const t = posToTime(ev.clientX)
+      if (which === 'start') {
+        const next = Math.min(t, end - TRIM_MIN_GAP)
+        onChange(Math.max(0, next), end)
+        onScrub(Math.max(0, next))
+      } else {
+        const next = Math.max(t, start + TRIM_MIN_GAP)
+        onChange(start, Math.min(duration, next))
+        onScrub(Math.min(duration, next))
+      }
+    }
+    function up() {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+
+  const startPct = duration ? (start / duration) * 100 : 0
+  const endPct = duration ? (end / duration) * 100 : 100
+
+  return (
+    <div className="trim-track" ref={trackRef}>
+      <div className="trim-range" style={{ left: `${startPct}%`, width: `${Math.max(0, endPct - startPct)}%` }} />
+      <div className="trim-handle" style={{ left: `${startPct}%` }} onPointerDown={(e) => onHandlePointerDown('start', e)} />
+      <div className="trim-handle" style={{ left: `${endPct}%` }} onPointerDown={(e) => onHandlePointerDown('end', e)} />
     </div>
   )
 }
