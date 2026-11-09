@@ -301,6 +301,10 @@ export default function VideoEditor({ project, onChange }: VideoEditorProps) {
                 <button className={`ghost-btn ${selectedRegion.shape === 'circle' ? 'active' : ''}`} onClick={() => updateRegion(selectedRegion.id, { shape: 'circle' })}>원형</button>
                 <button className={`ghost-btn ${selectedRegion.shape === 'rect' ? 'active' : ''}`} onClick={() => updateRegion(selectedRegion.id, { shape: 'rect' })}>사각형</button>
               </div>
+              <div className="panel-actions">
+                <button className={`ghost-btn ${selectedRegion.style !== 'mosaic' ? 'active' : ''}`} onClick={() => updateRegion(selectedRegion.id, { style: 'blur' })}>흐리게</button>
+                <button className={`ghost-btn ${selectedRegion.style === 'mosaic' ? 'active' : ''}`} onClick={() => updateRegion(selectedRegion.id, { style: 'mosaic' })}>모자이크</button>
+              </div>
               <label className="slider-row">
                 <span>크기</span>
                 <input
@@ -313,7 +317,7 @@ export default function VideoEditor({ project, onChange }: VideoEditorProps) {
                 />
               </label>
               <label className="slider-row">
-                <span>강도</span>
+                <span>{selectedRegion.style === 'mosaic' ? '칸 크기' : '강도'}</span>
                 <input
                   type="range"
                   min={0}

@@ -10,11 +10,44 @@ export async function normalizeImageFile(file: File): Promise<File> {
   const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
   const isHeic = file.type === 'image/heic' || file.type === 'image/heif' || ext === 'heic' || ext === 'heif'
   if (!isHeic) return file
-  const { default: heic2any } = await import('heic2any')
-  const converted = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 })
-  const blob = Array.isArray(converted) ? converted[0] : converted
+  let blob: Blob
+  try {
+    const { default: heic2any } = await import('heic2any')
+    const converted = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 })
+    blob = Array.isArray(converted) ? converted[0] : converted
+  } catch {
+    // Safari can decode some HEIC variants natively even when the bundled
+    // converter cannot. Let its image decoder act as a fallback.
+    blob = await decodeHeicWithBrowser(file)
+  }
   const name = file.name.replace(/\.(heic|heif)$/i, '.jpg') || 'photo.jpg'
   return new File([blob], name, { type: 'image/jpeg' })
+}
+
+function decodeHeicWithBrowser(file: File): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      const canvas = document.createElement('canvas')
+      canvas.width = img.naturalWidth
+      canvas.height = img.naturalHeight
+      const context = canvas.getContext('2d')
+      if (!context) return reject(new Error('HEIC 사진을 변환할 수 없어요.'))
+      context.drawImage(img, 0, 0)
+      canvas.toBlob(
+        (blob) => (blob ? resolve(blob) : reject(new Error('HEIC 사진을 JPEG로 변환할 수 없어요.'))),
+        'image/jpeg',
+        0.92,
+      )
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      reject(new Error('이 브라우저에서 HEIC 사진을 읽을 수 없어요. JPEG로 변환한 뒤 다시 선택해 주세요.'))
+    }
+    img.src = url
+  })
 }
 
 export function probeMedia(file: Blob, isVideo: boolean): Promise<MediaInfo> {

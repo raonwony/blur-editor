@@ -8,10 +8,13 @@ export interface Point {
 }
 
 export type BlurShape = 'freeform' | 'rect' | 'circle'
+// 'blur' = soft gaussian haze, 'mosaic' = pixelated blocks (text still reads as "something is written").
+export type BlurStyle = 'blur' | 'mosaic'
 
 export interface BlurStroke {
   id: string
   shape: BlurShape
+  style?: BlurStyle // undefined = 'blur' (projects saved before mosaic existed)
   points: Point[] // freeform only
   x: number // rect/circle only — normalized center x
   y: number // rect/circle only — normalized center y
@@ -24,6 +27,7 @@ export interface BlurStroke {
 export interface VideoBlurRegion {
   id: string
   shape: 'circle' | 'rect'
+  style?: BlurStyle // undefined = 'blur' (projects saved before mosaic existed)
   x: number // normalized center x
   y: number // normalized center y
   w: number // normalized width (bounding box)

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import type { BlurShape, BlurStroke, PhotoProject, Point, Rotation, TextLayer } from '../types'
+import type { BlurShape, BlurStroke, BlurStyle, PhotoProject, Point, Rotation, TextLayer } from '../types'
 import { loadImage } from '../utils/media'
 import { renderPhoto, rotatedSize } from '../utils/renderPhoto'
-import { DEFAULT_BLUR_STRENGTH } from '../utils/canvasBlur'
+import { DEFAULT_PHOTO_BLUR_STRENGTH } from '../utils/canvasBlur'
 import { clamp01, normalizeAngle, rotateCropRect90, rotatePoint90 } from '../utils/geometry'
 import { useElementSize } from '../hooks/useElementSize'
 import { useOverlayRect } from '../hooks/useOverlayRect'
@@ -89,7 +89,8 @@ export default function PhotoEditor({ project, onChange }: PhotoEditorProps) {
   const [brushSize, setBrushSize] = useState(0.06)
   const [shapeSize, setShapeSize] = useState(0.3)
   const [blurMode, setBlurMode] = useState<BlurMode>('freeform')
-  const [blurStrength, setBlurStrength] = useState(DEFAULT_BLUR_STRENGTH)
+  const [blurStrength, setBlurStrength] = useState(DEFAULT_PHOTO_BLUR_STRENGTH)
+  const [blurStyle, setBlurStyle] = useState<BlurStyle>('blur')
   const [selectedShapeId, setSelectedShapeId] = useState<string | null>(null)
   const [selectedTextId, setSelectedTextId] = useState<string | null>(null)
 
@@ -237,6 +238,7 @@ export default function PhotoEditor({ project, onChange }: PhotoEditorProps) {
         const mark: BlurStroke = {
           id: crypto.randomUUID(),
           shape: 'freeform',
+          style: blurStyle,
           points: stroke.points,
           x: 0,
           y: 0,
@@ -255,6 +257,7 @@ export default function PhotoEditor({ project, onChange }: PhotoEditorProps) {
       const mark: BlurStroke = {
         id: crypto.randomUUID(),
         shape: blurMode,
+        style: blurStyle,
         points: [],
         x: clamp01(bounds.x),
         y: clamp01(bounds.y),
@@ -321,6 +324,20 @@ export default function PhotoEditor({ project, onChange }: PhotoEditorProps) {
   const selectedShape = project.blurStrokes.find((s) => s.id === selectedShapeId) ?? null
   const selectedFreeform = selectedShape?.shape === 'freeform' ? selectedShape : null
   const selectedRectOrCircle = selectedShape && selectedShape.shape !== 'freeform' ? selectedShape : null
+
+  // Style toggle edits the selected mark if there is one, otherwise the style used for the next mark.
+  const activeStyle: BlurStyle = selectedShape ? (selectedShape.style ?? 'blur') : blurStyle
+  const strengthLabel = activeStyle === 'mosaic' ? '칸 크기' : '강도'
+  function chooseStyle(style: BlurStyle) {
+    setBlurStyle(style)
+    if (selectedShape) updateBlurShape(selectedShape.id, { style })
+  }
+  const stylePicker = (
+    <div className="panel-actions">
+      <button className={`ghost-btn ${activeStyle === 'blur' ? 'active' : ''}`} onClick={() => chooseStyle('blur')}>흐리게</button>
+      <button className={`ghost-btn ${activeStyle === 'mosaic' ? 'active' : ''}`} onClick={() => chooseStyle('mosaic')}>모자이크</button>
+    </div>
+  )
 
   const cropTool = useCropTool(project.crop, media.width, media.height, (crop) => onChange({ crop }))
 
@@ -413,6 +430,7 @@ export default function PhotoEditor({ project, onChange }: PhotoEditorProps) {
           {blurMode === 'freeform' && (
             <>
               {selectedFreeform && <p className="panel-subheading">방금 그린 블러 — 바로 조절할 수 있어요</p>}
+              {stylePicker}
               <label className="slider-row">
                 <span>브러시 크기</span>
                 <input
@@ -429,7 +447,7 @@ export default function PhotoEditor({ project, onChange }: PhotoEditorProps) {
                 />
               </label>
               <label className="slider-row">
-                <span>강도</span>
+                <span>{strengthLabel}</span>
                 <input
                   type="range"
                   min={0}
@@ -455,6 +473,7 @@ export default function PhotoEditor({ project, onChange }: PhotoEditorProps) {
               <p className="panel-subheading">
                 {selectedRectOrCircle ? '방금 그린 블러 — 바로 조절할 수 있어요' : '화면을 드래그해서 블러를 그리세요 (탭만 하면 기본 크기로 생겨요)'}
               </p>
+              {stylePicker}
               <label className="slider-row">
                 <span>크기</span>
                 <input
@@ -471,7 +490,7 @@ export default function PhotoEditor({ project, onChange }: PhotoEditorProps) {
                 />
               </label>
               <label className="slider-row">
-                <span>강도</span>
+                <span>{strengthLabel}</span>
                 <input
                   type="range"
                   min={0}
@@ -497,6 +516,7 @@ export default function PhotoEditor({ project, onChange }: PhotoEditorProps) {
               <p className="panel-subheading">
                 {selectedShape ? '선택한 블러를 수정하세요' : '수정할 블러를 화면에서 탭하세요'}
               </p>
+              {selectedShape && stylePicker}
               {selectedFreeform && (
                 <div className="text-controls">
                   <label className="slider-row">
@@ -511,7 +531,7 @@ export default function PhotoEditor({ project, onChange }: PhotoEditorProps) {
                     />
                   </label>
                   <label className="slider-row">
-                    <span>강도</span>
+                    <span>{strengthLabel}</span>
                     <input
                       type="range"
                       min={0}
@@ -538,7 +558,7 @@ export default function PhotoEditor({ project, onChange }: PhotoEditorProps) {
                     />
                   </label>
                   <label className="slider-row">
-                    <span>강도</span>
+                    <span>{strengthLabel}</span>
                     <input
                       type="range"
                       min={0}

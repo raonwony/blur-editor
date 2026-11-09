@@ -34,7 +34,7 @@ export default function Export({ projectId, onHome, onBackToEdit }: ExportProps)
   }, [projectId])
 
   useEffect(() => {
-    if (!project || startedRef.current) return
+    if (!project || project.type !== 'photo' || startedRef.current) return
     startedRef.current = true
     run(project)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -126,7 +126,9 @@ export default function Export({ projectId, onHome, onBackToEdit }: ExportProps)
         {status === 'error' && (
           <div className="export-status">
             <p className="export-error">{error}</p>
-            <button className="ghost-btn" onClick={() => { startedRef.current = false; run(project) }}>다시 시도</button>
+            {project.type === 'photo' && (
+              <button className="ghost-btn" onClick={() => { startedRef.current = false; run(project) }}>다시 시도</button>
+            )}
           </div>
         )}
 
@@ -144,6 +146,12 @@ export default function Export({ projectId, onHome, onBackToEdit }: ExportProps)
       {toast && <div className="export-toast">{toast}</div>}
 
       <footer className="export-footer">
+        {project.type === 'video' && status === 'idle' && (
+          <button className="primary-btn" onClick={() => run(project)}>동영상 만들기</button>
+        )}
+        {project.type === 'video' && status === 'error' && (
+          <button className="primary-btn" onClick={() => run(project)}>다시 시도</button>
+        )}
         <button className="primary-btn" disabled={status !== 'ready'} onClick={handleSave}>사진첩에 저장</button>
         {canShareFiles() && (
           <button className="ghost-btn" disabled={status !== 'ready'} onClick={handleShare}>바로 공유</button>

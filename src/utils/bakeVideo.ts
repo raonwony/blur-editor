@@ -4,11 +4,16 @@ import { drawTextLayers } from './renderPhoto'
 
 type CaptureCanvas = HTMLCanvasElement & { captureStream?: (fps?: number) => MediaStream }
 type CaptureVideo = HTMLVideoElement & { captureStream?: () => MediaStream; mozCaptureStream?: () => MediaStream }
+type AudioContextWindow = Window & { webkitAudioContext?: typeof AudioContext }
 
 export function canBakeVideo(): boolean {
   return (
     typeof MediaRecorder !== 'undefined' &&
-    typeof (HTMLCanvasElement.prototype as CaptureCanvas).captureStream === 'function'
+    typeof (HTMLCanvasElement.prototype as CaptureCanvas).captureStream === 'function' &&
+    (typeof HTMLMediaElement === 'undefined' ||
+      typeof (HTMLMediaElement.prototype as CaptureVideo).captureStream === 'function' ||
+      typeof AudioContext !== 'undefined' ||
+      typeof (window as AudioContextWindow).webkitAudioContext !== 'undefined')
   )
 }
 
@@ -30,13 +35,40 @@ export async function bakeVideo(project: VideoProject, onProgress?: (fraction: n
   const url = URL.createObjectURL(project.original)
   const video = document.createElement('video') as CaptureVideo
   video.src = url
-  video.muted = true
   video.playsInline = true
 
-  await new Promise<void>((resolve, reject) => {
-    video.onloadedmetadata = () => resolve()
-    video.onerror = () => reject(new Error('영상을 불러올 수 없어요.'))
-  })
+  // Start playback and resume Web Audio synchronously from the export button's
+  // click. Safari doesn't expose HTMLMediaElement.captureStream, so its audio
+  // must be routed through a MediaStreamDestination instead.
+  const nativeStream = video.captureStream ? video.captureStream() : video.mozCaptureStream?.()
+  let audioContext: AudioContext | null = null
+  let audioDestination: MediaStreamAudioDestinationNode | null = null
+  let playPromise: Promise<void>
+  if (nativeStream) {
+    video.muted = true
+    playPromise = video.play()
+  } else {
+    const AudioContextConstructor = window.AudioContext ?? (window as AudioContextWindow).webkitAudioContext
+    if (!AudioContextConstructor) {
+      URL.revokeObjectURL(url)
+      throw new Error('이 브라우저에서는 동영상 오디오를 처리할 수 없어요.')
+    }
+    audioContext = new AudioContextConstructor()
+    audioDestination = audioContext.createMediaStreamDestination()
+    const source = audioContext.createMediaElementSource(video)
+    source.connect(audioDestination)
+    video.muted = false
+    void audioContext.resume()
+    playPromise = video.play()
+  }
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      if (video.readyState >= 1) return resolve()
+      video.onloadedmetadata = () => resolve()
+      video.onerror = () => reject(new Error('영상을 불러올 수 없어요.'))
+    })
+    await playPromise
 
   const rotated90 = project.rotation === 90 || project.rotation === 270
   const rw = rotated90 ? video.videoHeight : video.videoWidth
@@ -83,8 +115,10 @@ export async function bakeVideo(project: VideoProject, onProgress?: (fraction: n
   }
 
   const canvasStream = outCanvas.captureStream!(30)
-  const sourceStream = video.captureStream ? video.captureStream() : video.mozCaptureStream?.()
-  const audioTracks = sourceStream ? sourceStream.getAudioTracks() : []
+  const audioTracks = nativeStream?.getAudioTracks() ?? audioDestination?.stream.getAudioTracks() ?? []
+  if (!audioTracks.length && !video.muted) {
+    throw new Error('동영상 오디오를 가져오지 못했어요. Safari를 최신 버전으로 업데이트한 뒤 다시 시도해 주세요.')
+  }
   const combined = new MediaStream([...canvasStream.getVideoTracks(), ...audioTracks])
 
   const mimeType = pickMimeType()
@@ -109,8 +143,6 @@ export async function bakeVideo(project: VideoProject, onProgress?: (fraction: n
 
   try {
     recorder.start(250)
-    video.currentTime = 0
-    await video.play()
     raf = requestAnimationFrame(loop)
     await new Promise<void>((resolve) => {
       video.onended = () => resolve()
@@ -123,7 +155,10 @@ export async function bakeVideo(project: VideoProject, onProgress?: (fraction: n
     return await stopped
   } finally {
     cancelAnimationFrame(raf)
+  }
+  } finally {
     video.pause()
     URL.revokeObjectURL(url)
+    await audioContext?.close()
   }
 }
