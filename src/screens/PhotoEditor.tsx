@@ -75,6 +75,31 @@ function hitTestFreeform(strokes: BlurStroke[], p: Point): BlurStroke | null {
   return best
 }
 
+// ---- Zoom / pan ---------------------------------------------------------
+// The canvas is zoomed with a CSS transform (origin = its centre). Pointer
+// coordinates and overlay boxes both come from getBoundingClientRect, which
+// includes the transform, so drawing and overlays stay correct while zoomed.
+const MAX_ZOOM = 6
+// Above this zoom the preview is re-rendered at higher resolution so small text stays sharp.
+const HIRES_ZOOM = 1.6
+const PREVIEW_DIM = 1100
+const PREVIEW_DIM_HIRES = 2200
+
+interface View {
+  scale: number
+  x: number // px translation of the canvas centre, in screen px
+  y: number
+}
+const IDENTITY_VIEW: View = { scale: 1, x: 0, y: 0 }
+
+// Keeps the image from being dragged out of its own (unzoomed) box.
+function clampView(v: View, baseW: number, baseH: number): View {
+  const scale = Math.min(MAX_ZOOM, Math.max(1, v.scale))
+  const maxX = (baseW * (scale - 1)) / 2
+  const maxY = (baseH * (scale - 1)) / 2
+  return { scale, x: Math.min(maxX, Math.max(-maxX, v.x)), y: Math.min(maxY, Math.max(-maxY, v.y)) }
+}
+
 type BlurMode = BlurShape | 'select'
 type Tool = 'blur' | 'text' | 'crop' | null
 
@@ -98,8 +123,115 @@ export default function PhotoEditor({ project, onChange }: PhotoEditorProps) {
   const baseImageRef = useRef<HTMLCanvasElement | null>(null)
   const drawingRef = useRef<{ points: Point[] } | null>(null)
   const shapeDrawRef = useRef<{ start: Point; current: Point } | null>(null)
-  const { ref: stageRef } = useElementSize<HTMLDivElement>()
-  const overlayRect = useOverlayRect(stageRef, canvasRef)
+  const { ref: stageRef, size: stageSize } = useElementSize<HTMLDivElement>()
+
+  const [view, setView] = useState<View>(IDENTITY_VIEW)
+  const viewRef = useRef<View>(IDENTITY_VIEW)
+  const pointersRef = useRef(new Map<number, { x: number; y: number }>())
+  const pinchRef = useRef<{ d0: number; m0: { x: number; y: number }; view0: View; centre: { x: number; y: number } } | null>(null)
+  const overlayRect = useOverlayRect(stageRef, canvasRef, view)
+  const hiRes = view.scale > HIRES_ZOOM
+
+  function applyView(next: View) {
+    const canvas = canvasRef.current
+    const clamped = canvas ? clampView(next, canvas.offsetWidth, canvas.offsetHeight) : next
+    viewRef.current = clamped
+    setView(clamped)
+  }
+  // Un-zoomed centre of the canvas in client coordinates.
+  function canvasCentre() {
+    const rect = canvasRef.current!.getBoundingClientRect()
+    return { x: rect.left + rect.width / 2 - viewRef.current.x, y: rect.top + rect.height / 2 - viewRef.current.y }
+  }
+  // Zooms to `scale`, keeping the image point under (cx, cy) fixed on screen.
+  function zoomAround(cx: number, cy: number, scale: number) {
+    if (!canvasRef.current) return
+    const v = viewRef.current
+    const centre = canvasCentre()
+    const s1 = Math.min(MAX_ZOOM, Math.max(1, scale))
+    const ux = (cx - centre.x - v.x) / v.scale
+    const uy = (cy - centre.y - v.y) / v.scale
+    applyView({ scale: s1, x: cx - centre.x - s1 * ux, y: cy - centre.y - s1 * uy })
+  }
+
+  // Two fingers anywhere on the stage zoom/pan; a single finger still draws.
+  function startPinch() {
+    const [a, b] = [...pointersRef.current.values()]
+    if (!a || !b || !canvasRef.current) return
+    pinchRef.current = {
+      d0: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
+      m0: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+      view0: viewRef.current,
+      centre: canvasCentre(),
+    }
+  }
+  // Zoom/pan works in every tool. While two or more fingers are down the gesture owns
+  // all pointer movement: the overlays (text, crop box, blur shapes) drag via window
+  // listeners, so their move events are stopped here until every finger is lifted.
+  const gestureRef = useRef(false)
+  function onStagePointerDownCapture(e: React.PointerEvent) {
+    // A mouse can't be mid-gesture with other pointers; drop any stale entries (e.g. a missed pointerup).
+    if (e.pointerType === 'mouse') {
+      pointersRef.current.clear()
+      gestureRef.current = false
+    }
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    if (pointersRef.current.size >= 2) {
+      gestureRef.current = true
+      // The first finger may have started a stroke; the gesture takes over.
+      drawingRef.current = null
+      shapeDrawRef.current = null
+      redrawWithLiveStroke()
+      if (pointersRef.current.size === 2) startPinch()
+      e.stopPropagation() // a second finger must not grab a text layer / crop handle / shape
+    }
+  }
+  function onStagePointerMoveCapture(e: React.PointerEvent) {
+    const p = pointersRef.current.get(e.pointerId)
+    if (!p) return
+    p.x = e.clientX
+    p.y = e.clientY
+    if (gestureRef.current) e.stopPropagation()
+    const pinch = pinchRef.current
+    if (!pinch || pointersRef.current.size < 2) return
+    const [a, b] = [...pointersRef.current.values()]
+    const d = Math.hypot(a.x - b.x, a.y - b.y)
+    const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+    const s1 = Math.min(MAX_ZOOM, Math.max(1, pinch.view0.scale * (d / pinch.d0)))
+    const ux = (pinch.m0.x - pinch.centre.x - pinch.view0.x) / pinch.view0.scale
+    const uy = (pinch.m0.y - pinch.centre.y - pinch.view0.y) / pinch.view0.scale
+    applyView({ scale: s1, x: m.x - pinch.centre.x - s1 * ux, y: m.y - pinch.centre.y - s1 * uy })
+  }
+  function onStagePointerEndCapture(e: React.PointerEvent) {
+    if (!pointersRef.current.delete(e.pointerId)) return
+    if (pointersRef.current.size === 0) gestureRef.current = false
+    if (pointersRef.current.size < 2) pinchRef.current = null
+    else startPinch()
+  }
+
+  // Mouse wheel / trackpad pinch (ctrl+wheel) zoom for desktop.
+  useEffect(() => {
+    const el = stageRef.current
+    if (!el) return
+    function onWheel(e: WheelEvent) {
+      e.preventDefault()
+      zoomAround(e.clientX, e.clientY, viewRef.current.scale * Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)))
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Switching tools always returns to the full, un-zoomed image.
+  useEffect(() => {
+    pointersRef.current.clear()
+    pinchRef.current = null
+    gestureRef.current = false
+    if (viewRef.current.scale !== 1 || viewRef.current.x !== 0 || viewRef.current.y !== 0) {
+      viewRef.current = IDENTITY_VIEW
+      setView(IDENTITY_VIEW)
+    }
+  }, [tool])
 
   useEffect(() => {
     let alive = true
@@ -113,11 +245,23 @@ export default function PhotoEditor({ project, onChange }: PhotoEditorProps) {
 
   const media = rotatedSize(project.width, project.height, project.rotation)
 
+  // Fixed CSS size for the canvas (same box the old auto-sizing gave: contained in the
+  // stage, never larger than the 1100px preview) so switching the preview to a higher
+  // resolution while zoomed doesn't change how big it appears.
+  const canvasFit = (() => {
+    if (!stageSize.width || !stageSize.height) return null
+    const sc = Math.min(1, PREVIEW_DIM / Math.max(media.width, media.height))
+    const cw = media.width * sc
+    const ch = media.height * sc
+    const f = Math.min(1, stageSize.width / cw, stageSize.height / ch)
+    return { width: cw * f, height: ch * f }
+  })()
+
   // Rebuild the flattened preview whenever committed edits change.
   useEffect(() => {
     if (!image) return
     const rendered = renderPhoto(image, project, {
-      maxDim: 1100,
+      maxDim: hiRes ? PREVIEW_DIM_HIRES : PREVIEW_DIM,
       includeText: tool !== 'text',
       includeCrop: false,
     })
@@ -144,7 +288,7 @@ export default function PhotoEditor({ project, onChange }: PhotoEditorProps) {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [image, project.rotation, project.blurStrokes, project.textLayers, tool, blurMode, selectedShapeId])
+  }, [image, project.rotation, project.blurStrokes, project.textLayers, tool, blurMode, selectedShapeId, hiRes])
 
   function redrawWithLiveStroke() {
     const canvas = canvasRef.current
@@ -200,6 +344,7 @@ export default function PhotoEditor({ project, onChange }: PhotoEditorProps) {
 
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
     if (tool !== 'blur') return
+    if (pointersRef.current.size > 1) return // multi-touch = zoom/pan gesture, not a mark
     const p = toNormalized(e)
     if (blurMode === 'select') {
       const hit = hitTestFreeform(project.blurStrokes, p)
@@ -215,7 +360,7 @@ export default function PhotoEditor({ project, onChange }: PhotoEditorProps) {
     redrawWithLiveStroke()
   }
   function onPointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
-    if (tool !== 'blur') return
+    if (tool !== 'blur' || pointersRef.current.size > 1) return
     const p = toNormalized(e)
     if (blurMode === 'freeform') {
       if (!drawingRef.current) return
@@ -361,19 +506,38 @@ export default function PhotoEditor({ project, onChange }: PhotoEditorProps) {
       crop: project.crop ? rotateCropRect90(project.crop) : null,
     })
     cropTool.resetForRotate()
+    applyView(IDENTITY_VIEW) // the image changes shape; start again from the full view
   }
 
   return (
     <div className="photo-editor">
-      <div className="photo-stage" ref={stageRef}>
+      <div
+        className="photo-stage"
+        ref={stageRef}
+        onPointerDownCapture={onStagePointerDownCapture}
+        onPointerMoveCapture={onStagePointerMoveCapture}
+        onPointerUpCapture={onStagePointerEndCapture}
+        onPointerCancelCapture={onStagePointerEndCapture}
+      >
         <canvas
           ref={canvasRef}
           className="photo-canvas"
+          style={{
+            width: canvasFit?.width,
+            height: canvasFit?.height,
+            transform: view.scale === 1 && view.x === 0 && view.y === 0 ? undefined : `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
+          }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
         />
+
+        {view.scale > 1.001 && (
+          <button className="zoom-reset" onClick={() => applyView(IDENTITY_VIEW)}>
+            {view.scale.toFixed(1)}× · 원래대로
+          </button>
+        )}
 
         <div className="overlay-anchor" style={{ left: overlayRect.left, top: overlayRect.top, width: overlayRect.width, height: overlayRect.height }}>
           {tool === 'text' &&
@@ -420,6 +584,7 @@ export default function PhotoEditor({ project, onChange }: PhotoEditorProps) {
 
       {tool === 'blur' && (
         <div className="tool-panel">
+          <p className="panel-subheading">두 손가락으로 확대·이동한 뒤 한 손가락으로 그리세요</p>
           <div className="panel-actions">
             <button className={`ghost-btn ${blurMode === 'freeform' ? 'active' : ''}`} onClick={() => { setBlurMode('freeform'); setSelectedShapeId(null) }}>자유형</button>
             <button className={`ghost-btn ${blurMode === 'rect' ? 'active' : ''}`} onClick={() => { setBlurMode('rect'); setSelectedShapeId(null) }}>사각형</button>
